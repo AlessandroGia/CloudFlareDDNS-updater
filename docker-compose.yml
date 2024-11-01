@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  cloudflare-ddns:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - ZONE_ID=${ZONE_ID}
+      - RECORD_ID=${RECORD_ID}
+      - API_TOKEN=${API_TOKEN}
+      - DOMAIN=${DOMAIN}
+      - CHECK_INTERVAL=${CHECK_INTERVAL}
+      - DOCKERIZED=TRUE
+      - TZ=${TZ:-Europe/Rome}
+    volumes:
+      - ./logs:/app/logs
+    restart: always
