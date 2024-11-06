@@ -1,10 +1,10 @@
 
 # CloudflareDDNS-updater
 
-CloudflareDDNS-updater is a Python script that automatically updates a DNS record on Cloudflare with the current public IP address. This is useful for Dynamic DNS (DDNS) configurations where the IP address changes frequently, allowing you to keep the DNS record up-to-date without manual intervention.
+CloudflareDDNS-updater is a Python script that automatically updates DNS records on Cloudflare with the current public IP address. This is useful for Dynamic DNS (DDNS) configurations where the IP address changes frequently, allowing you to keep DNS records up-to-date without manual intervention.
 
 ## Features
-- Automatically updates a DNS record on Cloudflare with the current public IP address.
+- Automatically updates DNS records on Cloudflare with the current public IP address.
 - Detailed logging with daily log rotation.
 - Configurable via environment variables.
 
@@ -37,7 +37,7 @@ CloudflareDDNS-updater is a Python script that automatically updates a DNS recor
       ZONE_ID=<your ZONE_ID>
       RECORD_ID=<your RECORD_ID>
       API_TOKEN=<your API_TOKEN>
-      DOMAIN=<your domain or subdomain>
+      DOMAIN=<your domains or subdomains diveded by spaces>
       TZ=<your timezone> # defaults to Europe/Rome
       CHECK_INTERVAL=300  # optional, in seconds, defaults to 300
       ```
@@ -45,7 +45,7 @@ CloudflareDDNS-updater is a Python script that automatically updates a DNS recor
       - **ZONE_ID**: The Cloudflare Zone ID for the DNS.
       - **RECORD_ID**: The Cloudflare Record ID for the DNS record to be updated.
       - **API_TOKEN**: The Cloudflare API token with permissions to modify DNS records.
-      - **DOMAIN**: The domain or subdomain to update.
+      - **DOMAIN**: Domains or subdomains to update divided by spaces.
       - **TZ**: The timezone to use for logging. A list of valid timezones can be found [here](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones).
       - **CHECK_INTERVAL**: (Optional) The interval in seconds to check and update the IP. Defaults to 300 seconds (5 minutes).
 

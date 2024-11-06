@@ -56,7 +56,6 @@ class CloudflareDDNSUpdater:
             "Content-Type": "application/json"
         })
 
-# ciao
     @staticmethod
     def __setup_logging() -> Logger:
         project_root: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
