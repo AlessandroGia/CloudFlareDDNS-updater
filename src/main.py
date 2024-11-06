@@ -24,7 +24,7 @@ SOFTWARE.
 import os
 import time
 import logging
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Dict
 from logging import Logger
 from logging.handlers import TimedRotatingFileHandler
 
@@ -125,7 +125,7 @@ class CloudflareDDNSUpdater:
         except requests.RequestException as e:
             self.__logger.error(f"Error in DNS update request: {e}")
 
-    def get_domain_info(self, domain) -> dict[str, str]:
+    def get_domain_info(self, domain) -> Dict[str, str]:
         if domain not in self.__last_domains:
             ip, zone_id = self.__get_cloudflare_record_info(domain)
             self.__last_domains[domain] = {"ip": ip, "zone_id": zone_id}
