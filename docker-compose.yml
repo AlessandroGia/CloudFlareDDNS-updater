@@ -7,12 +7,11 @@ services:
       dockerfile: Dockerfile
     environment:
       - ZONE_ID=${ZONE_ID}
-      - RECORD_ID=${RECORD_ID}
       - API_TOKEN=${API_TOKEN}
       - DOMAIN=${DOMAIN}
       - CHECK_INTERVAL=${CHECK_INTERVAL}
-      - DOCKERIZED=TRUE
       - TZ=${TZ:-Europe/Rome}
+      - DOCKERIZED=TRUE
     volumes:
       - ./logs:/app/logs
     restart: always
