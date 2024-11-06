@@ -24,7 +24,7 @@ SOFTWARE.
 import os
 import time
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 from logging import Logger
 from logging.handlers import TimedRotatingFileHandler
 
@@ -38,17 +38,18 @@ class CloudflareDDNSUpdater:
         self.__logger: Logger = self.__setup_logging()
 
         zone_id: str = os.getenv("ZONE_ID")
-        record_id: str = os.getenv("RECORD_ID")
         api_token: str = os.getenv("API_TOKEN")
-        self.__DOMAIN: str = os.getenv("DOMAIN")
+        self.__DOMAINS: str = os.getenv("DOMAIN").split(" ")
 
-        if not all([zone_id, record_id, api_token, self.__DOMAIN]):
+        if not all([zone_id, api_token, self.__DOMAINS]):
             self.__logger.critical("Missing environment variables. Ensure ZONE_ID, RECORD_ID, API_TOKEN, and DOMAIN are set.")
             raise EnvironmentError("Missing environment variables.")
 
-        self.__URL_API: str = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records/{record_id}"
+        self.__URL_API: str = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
 
         self.__check_interval: int = self.__get_check_interval()
+
+        self.__last_domains: dict[str, dict[str, str]] = {}
 
         self.__session: requests.Session = requests.Session()
         self.__session.headers.update({
@@ -91,45 +92,62 @@ class CloudflareDDNSUpdater:
             self.__logger.error(f"Error retrieving public IP: {e}")
             return None
 
-    def __get_cloudflare_ip(self) -> Optional[str]:
+    def __get_cloudflare_record_info(self, domain: str) -> Tuple[Optional[str], Optional[str]]:
         try:
             response: requests.Response = self.__session.get(self.__URL_API)
             response.raise_for_status()
-            cloudflare_ip = response.json().get("result", {}).get("content")
-            self.__logger.info(f"Current IP configured on Cloudflare: {cloudflare_ip}")
-            return cloudflare_ip
+            cloudflare_ip: str = "0.0.0.0"
+            record_id: str = ""
+            for record in response.json().get("result", {}):
+                if record.get("name") == domain:
+                    cloudflare_ip, record_id = record.get("content"), record.get("id")
+            self.__logger.info(f"Current IP configured on {domain}: {cloudflare_ip}")
+            return cloudflare_ip, record_id
         except requests.RequestException as e:
             self.__logger.error(f"Error retrieving IP configured on Cloudflare: {e}")
-            return None
+            return None, None
 
-    def update_dns_record(self, old_ip: str, new_ip: str) -> None:
+    def update_dns_record(self, domain: str, zone_id: str, old_ip: str, new_ip: str) -> None:
         data: dict[str, Any] = {
             "type": "A",
-            "name": self.__DOMAIN,
+            "name": domain,
             "content": new_ip,
             "ttl": 120,
             "proxied": False
         }
         try:
-            response: requests.Response = self.__session.put(self.__URL_API, json=data)
+            response: requests.Response = self.__session.put(self.__URL_API + f'/{zone_id}', json=data)
             response.raise_for_status()
             if response.json().get("success"):
-                self.__logger.info(f"DNS record successfully updated from {old_ip} to {new_ip}")
+                self.__logger.info(f"{domain} successfully updated from {old_ip} to {new_ip}")
             else:
-                self.__logger.error(f"Failed to update DNS record: {response.json()}")
+                self.__logger.error(f"Failed to update {domain}: {response.json()}")
         except requests.RequestException as e:
             self.__logger.error(f"Error in DNS update request: {e}")
 
-    def main(self) -> None:
-        last_ip: str = self.__get_cloudflare_ip()
-        while True:
-            current_ip: str = self.__get_public_ip()
-            if current_ip and current_ip != last_ip:
-                self.update_dns_record(last_ip, current_ip)
-                last_ip = current_ip
-            else:
-                self.__logger.info("No change in public IP.")
+    def get_domain_info(self, domain) -> dict[str, str]:
+        if domain not in self.__last_domains:
+            ip, zone_id = self.__get_cloudflare_record_info(domain)
+            self.__last_domains[domain] = {"ip": ip, "zone_id": zone_id}
+        return self.__last_domains[domain]
 
+    def has_to_update(self, dns_ip: str) -> str:
+        current_ip: str = self.__get_public_ip()
+        if current_ip and current_ip != dns_ip:
+            return current_ip
+        return ""
+
+    def main(self) -> None:
+        while True:
+            for domain in self.__DOMAINS:
+                domain = domain.strip()
+                if domain:
+                    domain_info = self.get_domain_info(domain)
+                    if current_ip := self.has_to_update(domain_info["ip"]):
+                        self.update_dns_record(domain, domain_info["zone_id"], domain_info["ip"], current_ip)
+                        self.__last_domains[domain]["ip"] = current_ip
+                    else:
+                        self.__logger.info(f"{domain} IP has not changed.")
             time.sleep(self.__check_interval)
 
 if __name__ == "__main__":
