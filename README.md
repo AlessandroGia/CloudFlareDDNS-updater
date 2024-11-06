@@ -35,17 +35,15 @@ CloudflareDDNS-updater is a Python script that automatically updates DNS records
 
       ```dotenv
       ZONE_ID=<your ZONE_ID>
-      RECORD_ID=<your RECORD_ID>
       API_TOKEN=<your API_TOKEN>
-      DOMAIN=<your domains or subdomains diveded by spaces>
+      DOMAIN=<your domains or subdomains diveded by commas>
       TZ=<your timezone> # defaults to Europe/Rome
       CHECK_INTERVAL=300  # optional, in seconds, defaults to 300
       ```
 
       - **ZONE_ID**: The Cloudflare Zone ID for the DNS.
-      - **RECORD_ID**: The Cloudflare Record ID for the DNS record to be updated.
       - **API_TOKEN**: The Cloudflare API token with permissions to modify DNS records.
-      - **DOMAIN**: Domains or subdomains to update divided by spaces.
+      - **DOMAIN**: Domains or subdomains to update divided by commas.
       - **TZ**: The timezone to use for logging. A list of valid timezones can be found [here](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones).
       - **CHECK_INTERVAL**: (Optional) The interval in seconds to check and update the IP. Defaults to 300 seconds (5 minutes).
 

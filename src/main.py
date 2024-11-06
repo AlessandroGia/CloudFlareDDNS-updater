@@ -39,10 +39,10 @@ class CloudflareDDNSUpdater:
 
         zone_id: str = os.getenv("ZONE_ID")
         api_token: str = os.getenv("API_TOKEN")
-        self.__DOMAINS: str = os.getenv("DOMAIN").split(" ")
+        self.__DOMAINS: str = os.getenv("DOMAIN").split(",")
 
         if not all([zone_id, api_token, self.__DOMAINS]):
-            self.__logger.critical("Missing environment variables. Ensure ZONE_ID, RECORD_ID, API_TOKEN, and DOMAIN are set.")
+            self.__logger.critical("Missing environment variables. Ensure ZONE_ID, API_TOKEN, and DOMAIN are set.")
             raise EnvironmentError("Missing environment variables.")
 
         self.__URL_API: str = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
