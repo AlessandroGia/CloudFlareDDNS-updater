@@ -73,7 +73,7 @@ The script generates detailed logs in `logs/CloudflareDDNS-updater.log`. Logs in
 
 ## Common Issues
 
-- **EnvironmentError**: Raised if critical environment variables are missing. Ensure `ZONE_ID`, `RECORD_ID`, `API_TOKEN`, and `DOMAIN` are correctly set in the `.env` file.
+- **EnvironmentError**: Raised if critical environment variables are missing. Ensure `ZONE_ID`, `API_TOKEN`, and `DOMAIN` are correctly set in the `.env` file.
 - **RequestException**: An error related to HTTP requests, usually caused by network issues or invalid API credentials.
 
 ## License
