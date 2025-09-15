@@ -162,7 +162,7 @@ class CloudflareDDNSUpdater:
         while True:
             for domain in (domain.strip() for domain in self.__DOMAINS):
                 if domain:
-                    self.__logger.info(f" ----- {domain} ----- ")
+                    self.__logger.info(f" -----| {domain} |----- ")
                     if not (host_ip := self.__get_public_ip(max_retries=3, timeout_retry=5)):
                         self.__logger.critical("Could not retrieve public IP. Skipping update.")
                         continue
