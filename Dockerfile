@@ -7,6 +7,6 @@ RUN apt-get update && apt-get install -y tzdata
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
-COPY src/ /app/src/
+COPY main.py /app
 
 CMD ["python", "-u", "/app/main.py"]
