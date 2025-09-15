@@ -28,7 +28,7 @@ from time import sleep
 from typing import Any, Optional, Tuple
 from logging import Logger
 from logging.handlers import TimedRotatingFileHandler
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 import requests
 import dotenv
@@ -38,6 +38,14 @@ import dotenv
 class DomainInfo:
     ip: str
     zone_id: str
+
+@dataclass(frozen=True)
+class ObjectData:
+    type: str
+    name: str
+    content: str
+    ttl: int
+    proxied: bool
 
 class CloudflareDDNSUpdater:
     IP_CHECK_URL: str = "https://api.ipify.org"
@@ -83,16 +91,6 @@ class CloudflareDDNSUpdater:
 
         return logger
 
-    @staticmethod
-    def __object_data(domain: str, new_ip: str) -> dict[str, Any]:
-        return {
-            "type": "A",
-            "name": domain,
-            "content": new_ip,
-            "ttl": 120,
-            "proxied": False
-        }
-
     def __get_check_interval(self) -> int:
         interval: str = os.getenv("CHECK_INTERVAL", 300)
         try:
@@ -108,9 +106,9 @@ class CloudflareDDNSUpdater:
                 response.raise_for_status()
                 return response.text.strip()
             except requests.RequestException as e:
-                if attempt != 2:
-                    self.__logger.error(f"Error retrieving public IP, error: {e})")
-                    self.__logger.warning(f"{attempt + 1} of {max_retries} - Retrying in {timeout_retry} seconds...")
+                self.__logger.error(f"{attempt + 1} of {max_retries} failed in retrieving public IP. Error: {e}")
+                if attempt < max_retries - 1:
+                    self.__logger.warning(f"Retrying in {timeout_retry} seconds...")
                     sleep(timeout_retry)
         return None
 
@@ -127,30 +125,33 @@ class CloudflareDDNSUpdater:
                 self.__logger.info(f"Current IP configured on {domain}: {cloudflare_ip}")
                 return cloudflare_ip, record_id
             except requests.RequestException as e:
-                self.__logger.error(f"Error retrieving IP configured on Cloudflare, error: {e}")
-                self.__logger.warning(f"{attempt + 1} of {max_retries} - Retrying in {timeout_retry} seconds...")
-                sleep(timeout_retry)
+                self.__logger.error(f"{attempt + 1} of {max_retries} failed in retrieving IP configured on Cloudflare. Error: {e}")
+                if attempt < max_retries - 1:
+                    self.__logger.warning(f"Retrying in {timeout_retry} seconds...")
+                    sleep(timeout_retry)
         return None, None
 
     def __update_dns_record(self, domain: str, zone_id: str, new_ip: str, max_retries: int = 3, timeout_retry: int = 5) -> bool:
-        data: dict[str, Any] = self.__object_data(domain, new_ip)
+        data: ObjectData = ObjectData("A", domain, new_ip, 120, False)
         for attempt in range(max_retries):
             try:
-                response: requests.Response = self.__session.put(self.__URL_API + f'/{zone_id}', json=data)
+                response: requests.Response = self.__session.put(self.__URL_API + f'/{zone_id}', json=asdict(data))
                 response.raise_for_status()
                 if response.json().get("success"):
                     self.__last_domains[domain].ip = new_ip
                     return True
                 else:
-                    self.__logger.error(f"Failed to update{domain}: {response.json()}")
+                    self.__logger.error(f"{attempt + 1} of {max_retries} failed in updating DNS record. Error: {response.json()}")
             except requests.RequestException as e:
-                self.__logger.error(f"Error in DNS update request for {domain}, error: {e}")
-            self.__logger.warning(f"{attempt + 1} of {max_retries} - Retrying in {timeout_retry} seconds...")
+                self.__logger.error(f"{attempt + 1} of {max_retries} failed in updating DNS record. Error: {e}")
+            if attempt < max_retries - 1:
+                self.__logger.warning(f"Retrying in {timeout_retry} seconds...")
+                sleep(timeout_retry)
         return False
 
-    def __get_domain_info(self, domain) -> Optional[DomainInfo]:
+    def __get_domain_info(self, domain, max_retries: int = 3, timeout_retry: int = 5) -> Optional[DomainInfo]:
         if domain not in self.__last_domains:
-            ip, zone_id = self.__get_cloudflare_record_info(domain)
+            ip, zone_id = self.__get_cloudflare_record_info(domain, max_retries, timeout_retry)
             if not (ip and zone_id):
                 return None
             self.__last_domains[domain] = DomainInfo(ip=ip, zone_id=zone_id)
@@ -160,14 +161,14 @@ class CloudflareDDNSUpdater:
         while True:
             for domain in (domain.strip() for domain in self.__DOMAINS):
                 if domain:
-                    if not (host_ip := self.__get_public_ip()):
+                    if not (host_ip := self.__get_public_ip(max_retries=3, timeout_retry=5)):
                         self.__logger.critical("Could not retrieve public IP. Skipping update.")
                         continue
-                    if not (domain_info := self.__get_domain_info(domain)):
+                    if not (domain_info := self.__get_domain_info(domain, max_retries=3, timeout_retry=5)):
                         self.__logger.critical(f"Could not retrieve info for {domain}. Skipping update.")
                         continue
                     if host_ip and host_ip != domain_info.ip:
-                        if self.__update_dns_record(domain, domain_info.zone_id, host_ip):
+                        if self.__update_dns_record(domain, domain_info.zone_id, host_ip, max_retries=3, timeout_retry=5):
                             self.__logger.info(f"{domain} successfully updated from {domain_info.ip} to {host_ip}.")
                         else:
                             self.__logger.critical(f"Could not update DNS record for {domain}. Skipping update.")
