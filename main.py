@@ -158,6 +158,7 @@ class CloudflareDDNSUpdater:
         return self.__last_domains[domain]
 
     def main(self) -> None:
+        self.__logger.info("Starting Cloudflare DDNS Updater...")
         while True:
             for domain in (domain.strip() for domain in self.__DOMAINS):
                 if domain:
