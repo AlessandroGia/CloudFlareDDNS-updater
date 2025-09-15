@@ -122,7 +122,7 @@ class CloudflareDDNSUpdater:
                 for record in response.json().get("result", {}):
                     if record.get("name") == domain:
                         cloudflare_ip, record_id = record.get("content"), record.get("id")
-                self.__logger.info(f"Current IP configured on {domain}: {cloudflare_ip}")
+                self.__logger.info(f"Current IP configured: {cloudflare_ip}")
                 return cloudflare_ip, record_id
             except requests.RequestException as e:
                 self.__logger.error(f"{attempt + 1} of {max_retries} failed in retrieving IP configured on Cloudflare. Error: {e}")
@@ -162,21 +162,23 @@ class CloudflareDDNSUpdater:
         while True:
             for domain in (domain.strip() for domain in self.__DOMAINS):
                 if domain:
+                    self.__logger.info(f" ----- {domain} ----- ")
                     if not (host_ip := self.__get_public_ip(max_retries=3, timeout_retry=5)):
                         self.__logger.critical("Could not retrieve public IP. Skipping update.")
                         continue
                     if not (domain_info := self.__get_domain_info(domain, max_retries=3, timeout_retry=5)):
-                        self.__logger.critical(f"Could not retrieve info for {domain}. Skipping update.")
+                        self.__logger.critical(f"Could not retrieve info. Skipping update.")
                         continue
                     if host_ip and host_ip != domain_info.ip:
                         if self.__update_dns_record(domain, domain_info.zone_id, host_ip, max_retries=3, timeout_retry=5):
-                            self.__logger.info(f"{domain} successfully updated from {domain_info.ip} to {host_ip}.")
+                            self.__logger.info(f"Successfully updated from {domain_info.ip} to {host_ip}.")
                         else:
-                            self.__logger.critical(f"Could not update DNS record for {domain}. Skipping update.")
+                            self.__logger.critical(f"Could not update DNS record. Skipping update.")
                     else:
-                        self.__logger.info(f"{domain} IP has not changed.")
+                        self.__logger.info(f"IP has not changed.")
+                    self.__logger.info(f" ----- {'~' * len(domain)} ----- ")
+            self.__logger.info(f"|----- Waiting {self.__check_interval} seconds until next check... -----|")
             time.sleep(self.__check_interval)
-            self.__logger.info(f"~-~-~-~-~-~")
 
 if __name__ == "__main__":
     dotenv.load_dotenv()
