@@ -28,7 +28,7 @@ from time import sleep
 from typing import Any, Optional, Tuple
 from logging import Logger
 from logging.handlers import TimedRotatingFileHandler
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 
 import requests
 import dotenv
@@ -138,7 +138,7 @@ class CloudflareDDNSUpdater:
                 response: requests.Response = self.__session.put(self.__URL_API + f'/{zone_id}', json=asdict(data))
                 response.raise_for_status()
                 if response.json().get("success"):
-                    self.__last_domains[domain].ip = new_ip
+                    self.__last_domains[domain] = replace(self.__last_domains[domain], ip=new_ip)
                     return True
                 else:
                     self.__logger.error(f"{attempt + 1} of {max_retries} failed in updating DNS record. Error: {response.json()}")
