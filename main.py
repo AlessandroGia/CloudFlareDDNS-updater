@@ -56,8 +56,8 @@ class CloudflareDDNSUpdater:
     def __init__(self) -> None:
         self.__logger: Logger = self.__setup_logging()
 
-        zone_id: str = get_secret("ZONE_ID")
-        api_token: str = os.getenv("API_TOKEN")
+        zone_id: str = get_secret("ZONE_ID_FILE")
+        api_token: str = os.getenv("API_TOKEN_FILE")
         self.__DOMAINS: list[str] = load_config("DOMAIN_FILE").get("domains", [])
 
         if not all([zone_id, api_token, self.__DOMAINS]):
