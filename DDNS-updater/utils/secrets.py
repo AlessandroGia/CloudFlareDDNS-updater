@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-def get_secret(name: str, default: str | None = None) -> str:
+def get_secret(name: str, default: str = None) -> str:
     """
     Read <Name>_FILE (path to secret file) first,
     then <NAME> (direct value).
