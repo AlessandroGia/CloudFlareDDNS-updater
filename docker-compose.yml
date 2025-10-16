@@ -4,12 +4,14 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
-      - ZONE_ID=${ZONE_ID}
-      - API_TOKEN=${API_TOKEN}
-      - DOMAIN=${DOMAIN}
+      - API_TOKEN_FILE=/run/secrets/API_TOKEN
+      - ZONE_ID_FILE=/run/secrets/ZONE_ID
+      - DOMAIN_FILE=/app/config/domains.yaml
       - CHECK_INTERVAL=${CHECK_INTERVAL}
       - TZ=${TZ:-Europe/Rome}
       - DOCKERIZED=TRUE
     volumes:
+      - ${SECRETS_PATH:-./secrets}:/run/secrets:ro
+      - ${CONFIGS_PATH:-./config}:/app/config:ro
       - ./logs:/app/logs
     restart: always

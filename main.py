@@ -30,6 +30,9 @@ from logging import Logger
 from logging.handlers import TimedRotatingFileHandler
 from dataclasses import dataclass, asdict, replace
 
+from utils.secrets import get_secret
+from utils.config import load_config
+
 import requests
 import dotenv
 
@@ -53,9 +56,9 @@ class CloudflareDDNSUpdater:
     def __init__(self) -> None:
         self.__logger: Logger = self.__setup_logging()
 
-        zone_id: str = os.getenv("ZONE_ID")
+        zone_id: str = get_secret("ZONE_ID")
         api_token: str = os.getenv("API_TOKEN")
-        self.__DOMAINS: list[str] = os.getenv("DOMAIN").split(",")
+        self.__DOMAINS: list[str] = load_config("DOMAIN_FILE").get("domains", [])
 
         if not all([zone_id, api_token, self.__DOMAINS]):
             self.__logger.critical("Missing environment variables. Ensure ZONE_ID, API_TOKEN, and DOMAIN are set.")
