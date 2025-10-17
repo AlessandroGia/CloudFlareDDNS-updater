@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    init: true
     environment:
       - API_TOKEN_FILE=/run/secrets/API_TOKEN
       - ZONE_ID_FILE=/run/secrets/ZONE_ID
@@ -14,4 +15,4 @@ services:
       - ${SECRETS_PATH:-./secrets}:/run/secrets:ro
       - ${CONFIGS_PATH:-./config}:/app/config:ro
       - ./logs:/app/logs
-    restart: always
+    restart: unless-stopped

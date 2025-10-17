@@ -22,20 +22,20 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 import os
-import time
+import signal
+import asyncio
 import logging
-from time import sleep
-from typing import Any, Optional, Tuple
+from typing import Optional, Tuple
 from logging import Logger
 from logging.handlers import TimedRotatingFileHandler
-from dataclasses import dataclass, asdict, replace
+from dataclasses import dataclass, replace, asdict
 
 from utils.secrets import get_secret
 from utils.config import load_config
 
-import requests
 import dotenv
-import signal
+import httpx
+
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,7 @@ class CloudflareDDNSUpdater:
 
     def __init__(self) -> None:
         self.__logger: Logger = self.__setup_logging()
+        self.__reload_requested = False
         signal.signal(signal.SIGHUP, self.__sighup_handler)
 
         zone_id: str = get_secret("ZONE_ID")
@@ -72,11 +73,11 @@ class CloudflareDDNSUpdater:
 
         self.__last_domains: dict[str, DomainInfo] = {}
 
-        self.__session: requests.Session = requests.Session()
-        self.__session.headers.update({
+        self.__headers = {
             "Authorization": f"Bearer {api_token}",
             "Content-Type": "application/json"
-        })
+        }
+
 
     @staticmethod
     def __setup_logging() -> Logger:
@@ -97,17 +98,23 @@ class CloudflareDDNSUpdater:
         return logger
 
     def __reload_config(self) -> None:
-        self.__logger.info("Received SIGHUP signal. Reloading configuration...")
+
+        if not self.__reload_requested:
+            return
+        self.__reload_requested = False
         new_domains = load_config("DOMAIN_FILE").get("domains", [])
         if not new_domains:
-            self.__logger.warning("No domains found in configuration after reload. Keeping existing domains.")
-        elif set(new_domains) == set(self.__domains):
-            self.__logger.info("No changes in domains after reload.")
-        else:
+            self.__logger.warning("Reload: No domains found in configuration after reload. Keeping existing domains.")
+            return
+        if set(new_domains) != set(self.__domains):
             self.__domains = new_domains
-            self.__logger.info(f"Configuration reloaded. New domains: {self.__domains}")
+            self.__logger.info(f"Reload: Configuration reloaded. New domains: {self.__domains}")
+        else:
+            self.__logger.info("Reload: No changes in domains after reload.")
 
-    def __sighup_handler(self, signum, frame):
+    def __sighup_handler(self, signum, frame) -> None:
+        self.__logger.info("Received SIGHUP signal. Requesting configuration reload.")
+        self.__reload_requested = True
         self.__reload_config()
 
     def __get_check_interval(self) -> int:
@@ -118,88 +125,91 @@ class CloudflareDDNSUpdater:
             self.__logger.error(f"Invalid CHECK_INTERVAL value: {interval}. Using default value of 300.")
             return 300
 
-    def __get_public_ip(self, max_retries: int = 3, timeout_retry: int = 5) -> Optional[str]:
-        for attempt in range(max_retries):
+    async def __get_public_ip(self, client: httpx.AsyncClient, max_retries: int = 3, timeout_retry: int = 5) -> Optional[str]:
+        for attempt in range(1, max_retries + 1):
             try:
-                response: requests.Response = requests.get(self.IP_CHECK_URL)
-                response.raise_for_status()
-                return response.text.strip()
-            except requests.RequestException as e:
-                self.__logger.error(f"{attempt + 1} of {max_retries} failed in retrieving public IP. Error: {e}")
-                if attempt < max_retries - 1:
+                r = await client.get(self.IP_CHECK_URL, timeout=5.0)
+                r.raise_for_status()
+                return r.text.strip()
+            except httpx.HTTPError as e:
+                self.__logger.error(f"{attempt} of {max_retries} failed in retrieving public IP. Error: {e}")
+                if attempt < max_retries:
                     self.__logger.warning(f"Retrying in {timeout_retry} seconds...")
-                    sleep(timeout_retry)
+                    await asyncio.sleep(timeout_retry)
         return None
 
-    def __get_cloudflare_record_info(self, domain: str, max_retries: int = 3, timeout_retry: int = 5) -> Tuple[Optional[str], Optional[str], ]:
-        for attempt in range(max_retries):
+    async def __get_cloudflare_record_info(self, client: httpx.AsyncClient, domain: str, max_retries: int = 3, timeout_retry: int = 5) -> Tuple[Optional[str], Optional[str], ]:
+        for attempt in range(1, max_retries + 1):
             try:
-                response: requests.Response = self.__session.get(self.__url_api)
-                response.raise_for_status()
-                cloudflare_ip: str = "0.0.0.0"
-                record_id: str = ""
-                for record in response.json().get("result", {}):
-                    if record.get("name") == domain:
-                        cloudflare_ip, record_id = record.get("content"), record.get("id")
-                self.__logger.info(f"Current IP configured: {cloudflare_ip}")
-                return cloudflare_ip, record_id
-            except requests.RequestException as e:
-                self.__logger.error(f"{attempt + 1} of {max_retries} failed in retrieving IP configured on Cloudflare. Error: {e}")
-                if attempt < max_retries - 1:
+                r = await client.get(self.__url_api, timeout=5.0)
+                r.raise_for_status()
+                result = r.json().get("result", [])
+                for rec in result:
+                    if rec.get("name") == domain and rec.get("type") == "A":
+                        self.__logger.info(f"Current IP configured: {rec.get('content')}")
+                        return rec.get("content"), rec.get("id")
+                return None, None
+            except httpx.HTTPError as e:
+                self.__logger.error(f"{attempt} of {max_retries} failed in retrieving IP configured on Cloudflare. Error: {e}")
+                if attempt < max_retries:
                     self.__logger.warning(f"Retrying in {timeout_retry} seconds...")
-                    sleep(timeout_retry)
+                    await asyncio.sleep(timeout_retry)
         return None, None
 
-    def __update_dns_record(self, domain: str, zone_id: str, new_ip: str, max_retries: int = 3, timeout_retry: int = 5) -> bool:
+    async def __update_dns_record(self, client: httpx.AsyncClient, domain: str, zone_id: str, new_ip: str, max_retries: int = 3, timeout_retry: int = 5) -> bool:
         data: ObjectData = ObjectData("A", domain, new_ip, 120, False)
-        for attempt in range(max_retries):
+        url = f"{self.__url_api}/{zone_id}"
+        for attempt in range(1, max_retries + 1):
             try:
-                response: requests.Response = self.__session.put(self.__url_api + f'/{zone_id}', json=asdict(data))
-                response.raise_for_status()
-                if response.json().get("success"):
+                r = await client.put(url, json=asdict(data), timeout=10.0)
+                r.raise_for_status()
+                if r.json().get("success"):
                     self.__last_domains[domain] = replace(self.__last_domains[domain], ip=new_ip)
                     return True
                 else:
-                    self.__logger.error(f"{attempt + 1} of {max_retries} failed in updating DNS record. Error: {response.json()}")
-            except requests.RequestException as e:
-                self.__logger.error(f"{attempt + 1} of {max_retries} failed in updating DNS record. Error: {e}")
-            if attempt < max_retries - 1:
+                    self.__logger.error(f"{attempt} of {max_retries} failed in updating DNS record. Error: {r.text}")
+
+            except httpx.HTTPError as e:
+                self.__logger.error(f"{attempt} of {max_retries} failed in updating DNS record. Error: {e}")
+            if attempt < max_retries:
                 self.__logger.warning(f"Retrying in {timeout_retry} seconds...")
-                sleep(timeout_retry)
+                await asyncio.sleep(timeout_retry)
         return False
 
-    def __get_domain_info(self, domain, max_retries: int = 3, timeout_retry: int = 5) -> Optional[DomainInfo]:
+    async def __get_domain_info(self, client: httpx.AsyncClient, domain, max_retries: int = 3, timeout_retry: int = 5) -> Optional[DomainInfo]:
         if domain not in self.__last_domains:
-            ip, zone_id = self.__get_cloudflare_record_info(domain, max_retries, timeout_retry)
+            ip, zone_id = await self.__get_cloudflare_record_info(client, domain, max_retries, timeout_retry)
             if not (ip and zone_id):
                 return None
             self.__last_domains[domain] = DomainInfo(ip=ip, zone_id=zone_id)
         return self.__last_domains[domain]
 
-    def main(self) -> None:
+    async def main(self) -> None:
         self.__logger.info("Starting Cloudflare DDNS Updater...")
-        while True:
-            for domain in (domain.strip() for domain in self.__domains):
-                if domain:
-                    self.__logger.info(f" -----| {domain} |----- ")
-                    if not (host_ip := self.__get_public_ip(max_retries=3, timeout_retry=5)):
-                        self.__logger.critical("Could not retrieve public IP. Skipping update.")
-                        continue
-                    if not (domain_info := self.__get_domain_info(domain, max_retries=3, timeout_retry=5)):
-                        self.__logger.critical(f"Could not retrieve info. Skipping update.")
-                        continue
-                    if host_ip and host_ip != domain_info.ip:
-                        if self.__update_dns_record(domain, domain_info.zone_id, host_ip, max_retries=3, timeout_retry=5):
-                            self.__logger.info(f"Successfully updated from {domain_info.ip} to {host_ip}.")
+        async with httpx.AsyncClient(headers=self.__headers, http2=True, limits=httpx.Limits(max_connections=20, max_keepalive_connections=10)) as client:
+            while True:
+                for domain in (domain.strip() for domain in self.__domains):
+                    if domain:
+                        self.__logger.info(f" -----| {domain} |----- ")
+                        if not (host_ip := await self.__get_public_ip(client, max_retries=3, timeout_retry=5)):
+                            self.__logger.critical("Could not retrieve public IP. Skipping update.")
+                            continue
+                        if not (domain_info := await self.__get_domain_info(client, domain, max_retries=3, timeout_retry=5)):
+                            self.__logger.critical(f"Could not retrieve info. Skipping update.")
+                            continue
+                        if host_ip and host_ip != domain_info.ip:
+                            if await self.__update_dns_record(client, domain, domain_info.zone_id, host_ip, max_retries=3, timeout_retry=5):
+                                self.__logger.info(f"Successfully updated from {domain_info.ip} to {host_ip}.")
+                            else:
+                                self.__logger.critical(f"Could not update DNS record. Skipping update.")
                         else:
-                            self.__logger.critical(f"Could not update DNS record. Skipping update.")
-                    else:
-                        self.__logger.info(f"IP has not changed.")
-                    self.__logger.info(f" ----- {'~' * len(domain)} ----- ")
-            self.__logger.info(f"|----- Waiting {self.__check_interval} seconds until next check... -----|")
-            time.sleep(self.__check_interval)
+                            self.__logger.info(f"IP has not changed.")
+                        self.__logger.info(f" ----- {'~' * len(domain)} ----- ")
+                self.__logger.info(f"|----- Waiting {self.__check_interval} seconds until next check... -----|")
+                await asyncio.sleep(self.__check_interval)
+
 
 if __name__ == "__main__":
     dotenv.load_dotenv()
-    CloudflareDDNSUpdater().main()
+    asyncio.run(CloudflareDDNSUpdater().main())
 
