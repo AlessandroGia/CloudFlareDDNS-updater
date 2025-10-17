@@ -35,6 +35,7 @@ from utils.config import load_config
 
 import requests
 import dotenv
+import signal
 
 
 @dataclass(frozen=True)
@@ -55,16 +56,17 @@ class CloudflareDDNSUpdater:
 
     def __init__(self) -> None:
         self.__logger: Logger = self.__setup_logging()
+        signal.signal(signal.SIGHUP, self.__sighup_handler)
 
         zone_id: str = get_secret("ZONE_ID")
         api_token: str = get_secret("API_TOKEN")
-        self.__DOMAINS: list[str] = load_config("DOMAIN_FILE").get("domains", [])
+        self.__domains: list[str] = load_config("DOMAIN_FILE").get("domains", [])
 
-        if not all([zone_id, api_token, self.__DOMAINS]):
+        if not all([zone_id, api_token, self.__domains]):
             self.__logger.critical("Missing environment variables. Ensure ZONE_ID, API_TOKEN, and DOMAIN are set.")
             raise EnvironmentError("Missing environment variables.")
 
-        self.__URL_API: str = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
+        self.__url_api: str = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/dns_records"
 
         self.__check_interval: int = self.__get_check_interval()
 
@@ -94,6 +96,20 @@ class CloudflareDDNSUpdater:
 
         return logger
 
+    def __reload_config(self) -> None:
+        self.__logger.info("Received SIGHUP signal. Reloading configuration...")
+        new_domains = load_config("DOMAIN_FILE").get("domains", [])
+        if not new_domains:
+            self.__logger.warning("No domains found in configuration after reload. Keeping existing domains.")
+        elif set(new_domains) == set(self.__domains):
+            self.__logger.info("No changes in domains after reload.")
+        else:
+            self.__domains = new_domains
+            self.__logger.info(f"Configuration reloaded. New domains: {self.__domains}")
+
+    def __sighup_handler(self, signum, frame):
+        self.__reload_config()
+
     def __get_check_interval(self) -> int:
         interval: str = os.getenv("CHECK_INTERVAL", 300)
         try:
@@ -118,7 +134,7 @@ class CloudflareDDNSUpdater:
     def __get_cloudflare_record_info(self, domain: str, max_retries: int = 3, timeout_retry: int = 5) -> Tuple[Optional[str], Optional[str], ]:
         for attempt in range(max_retries):
             try:
-                response: requests.Response = self.__session.get(self.__URL_API)
+                response: requests.Response = self.__session.get(self.__url_api)
                 response.raise_for_status()
                 cloudflare_ip: str = "0.0.0.0"
                 record_id: str = ""
@@ -138,7 +154,7 @@ class CloudflareDDNSUpdater:
         data: ObjectData = ObjectData("A", domain, new_ip, 120, False)
         for attempt in range(max_retries):
             try:
-                response: requests.Response = self.__session.put(self.__URL_API + f'/{zone_id}', json=asdict(data))
+                response: requests.Response = self.__session.put(self.__url_api + f'/{zone_id}', json=asdict(data))
                 response.raise_for_status()
                 if response.json().get("success"):
                     self.__last_domains[domain] = replace(self.__last_domains[domain], ip=new_ip)
@@ -163,7 +179,7 @@ class CloudflareDDNSUpdater:
     def main(self) -> None:
         self.__logger.info("Starting Cloudflare DDNS Updater...")
         while True:
-            for domain in (domain.strip() for domain in self.__DOMAINS):
+            for domain in (domain.strip() for domain in self.__domains):
                 if domain:
                     self.__logger.info(f" -----| {domain} |----- ")
                     if not (host_ip := self.__get_public_ip(max_retries=3, timeout_retry=5)):
